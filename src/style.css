@@ -189,3 +189,22 @@ body {
   .apk-content { flex-wrap: wrap; }
   .apk-text { min-width: 0; }
 }
+
+/* ===== Toggle switch ===== */
+.ad-toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; }
+.ad-toggle-label { display: block; font-size: 0.9rem; font-weight: 600; }
+.ad-toggle-desc { display: block; font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+
+.toggle { width: 44px; height: 24px; border-radius: 12px; border: none; background: var(--border); cursor: pointer; position: relative; transition: background 0.2s; flex-shrink: 0; padding: 0; }
+.toggle.on { background: var(--primary); }
+.toggle-knob { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform 0.2s; }
+.toggle.on .toggle-knob { transform: translateX(20px); }
+
+.ad-input { width: 100%; padding: 8px 12px; margin-top: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.78rem; font-family: monospace; outline: none; }
+.ad-input:focus { border-color: var(--primary); }
+.ad-number { padding: 8px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.9rem; text-align: center; outline: none; }
+.ad-number:focus { border-color: var(--primary); }
+
+/* ===== Guest usage indicator ===== */
+.guest-count { color: var(--muted); font-size: 0.82rem; margin-bottom: 16px; }
+.signup-link { color: var(--primary); cursor: pointer; text-decoration: underline; }
