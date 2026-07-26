@@ -18,13 +18,13 @@ app.add_middleware(
 
 # Pre-load the model at startup so the first request doesn't pay the download cost
 print("Loading U2Net model...")
-_session = new_session("u2net")
+_session = new_session("u2netp")
 print("Model loaded.")
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": "u2net"}
+    return {"status": "ok", "model": "u2netp"}
 
 
 @app.post("/remove-bg")
