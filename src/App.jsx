@@ -7,8 +7,10 @@ import {
   resetGuestUsage, DEFAULT_CONFIG,
 } from './ads.js';
 
-// Admin email — can control ads
 const ADMIN_EMAIL = 'arthurchibondoacademy@gmail.com';
+
+// Use the smallest model — 6MB vs 24MB for fp16
+const MODEL = 'isnet_quint8';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -74,15 +76,38 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  // --- Preload AI model on mount ---
+  // --- Preload AI model IMMEDIATELY on mount ---
   useEffect(() => {
+    let cancelled = false;
     if (modelStatus !== 'idle') return;
     setModelStatus('loading');
-    preload({ model: 'isnet_fp16', progress: (key, current, total) => {
-      setModelProgress(Math.round((current / total) * 100));
-    }})
-      .then(() => { setModelStatus('ready'); setModelProgress(100); })
-      .catch(() => { setModelStatus('idle'); });
+    setProgressText('Loading AI model (6MB)...');
+
+    preload({
+      model: MODEL,
+      progress: (key, current, total) => {
+        if (cancelled) return;
+        const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+        setModelProgress(pct);
+        if (key && key.includes('fetch')) {
+          setProgressText(`Downloading AI model... ${pct}%`);
+        }
+      },
+    })
+      .then(() => {
+        if (cancelled) return;
+        setModelStatus('ready');
+        setModelProgress(100);
+        setProgressText('');
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('Model preload failed:', err);
+        setModelStatus('idle');
+        setProgressText('');
+      });
+
+    return () => { cancelled = true; };
   }, [modelStatus]);
 
   // --- Fetch ad config from Supabase (global for all users) ---
@@ -90,9 +115,15 @@ export default function App() {
     fetchAdConfig().then((config) => {
       setAdConfig(config);
       setAdConfigLoaded(true);
-      initAds(config);
     });
   }, []);
+
+  // --- Init ads after div is rendered ---
+  useEffect(() => {
+    if (adConfigLoaded && adConfig?.enabled) {
+      requestAnimationFrame(() => initAds(adConfig));
+    }
+  }, [adConfigLoaded, adConfig]);
 
   // --- APK prompt after 30s ---
   useEffect(() => {
@@ -176,8 +207,8 @@ export default function App() {
         setProgressPct(40);
       }
       const result = await removeBackground(imgFile, {
-        model: 'isnet_fp16',
-        output: { format: 'image/png' },
+        model: MODEL,
+        output: { format: 'image/png', quality: 'medium' },
         progress: (key, current, total) => {
           const pct = Math.round((current / total) * 100);
           if (key.includes('fetch') || key.includes('compute:fetch')) {
@@ -260,7 +291,6 @@ export default function App() {
     setDlOpen(false);
   }
 
-  // Save ad config to Supabase (global for all users)
   async function updateAdConfig(newConfig) {
     setAdConfig(newConfig);
     initAds(newConfig);
@@ -269,7 +299,7 @@ export default function App() {
       try {
         await saveAdConfigRemote(newConfig);
       } catch (err) {
-        alert('Failed to save ad settings to server: ' + err.message);
+        alert('Failed to save: ' + err.message);
       } finally {
         setSavingAds(false);
       }
@@ -333,22 +363,17 @@ export default function App() {
         <button className="modal-close" onClick={() => setShowAdSettings(false)}>✕</button>
         <h2 className="modal-title" style={{ textAlign: 'center' }}>Ad Settings</h2>
         <p className="modal-sub" style={{ textAlign: 'center' }}>Changes apply to ALL users globally.</p>
-
         {savingAds && <p style={{ textAlign: 'center', color: 'var(--primary)', fontSize: '0.85rem', marginBottom: 12 }}>Saving to server…</p>}
 
         <div className="ad-toggle-row">
           <div><span className="ad-toggle-label">All Ads</span><span className="ad-toggle-desc">Master switch</span></div>
-          <button className={adConfig.enabled ? 'toggle on' : 'toggle'} onClick={() => updateAdConfig({ ...adConfig, enabled: !adConfig.enabled })}>
-            <span className="toggle-knob" />
-          </button>
+          <button className={adConfig.enabled ? 'toggle on' : 'toggle'} onClick={() => updateAdConfig({ ...adConfig, enabled: !adConfig.enabled })}><span className="toggle-knob" /></button>
         </div>
         <hr className="dropdown-sep" />
 
         <div className="ad-toggle-row">
-          <div><span className="ad-toggle-label">Popunder / Interstitial</span><span className="ad-toggle-desc">Full-page ad on click</span></div>
-          <button className={adConfig.popunder?.enabled ? 'toggle on' : 'toggle'} onClick={() => updateAdConfig({ ...adConfig, popunder: { ...adConfig.popunder, enabled: !adConfig.popunder?.enabled } })}>
-            <span className="toggle-knob" />
-          </button>
+          <div><span className="ad-toggle-label">Popunder</span><span className="ad-toggle-desc">Ad opens on user click</span></div>
+          <button className={adConfig.popunder?.enabled ? 'toggle on' : 'toggle'} onClick={() => updateAdConfig({ ...adConfig, popunder: { ...adConfig.popunder, enabled: !adConfig.popunder?.enabled } })}><span className="toggle-knob" /></button>
         </div>
         {adConfig.popunder?.enabled && (
           <input className="ad-input" type="text" value={adConfig.popunder?.src || ''} onChange={(e) => updateAdConfig({ ...adConfig, popunder: { ...adConfig.popunder, src: e.target.value } })} placeholder="Popunder script URL" />
@@ -356,15 +381,13 @@ export default function App() {
         <hr className="dropdown-sep" />
 
         <div className="ad-toggle-row">
-          <div><span className="ad-toggle-label">Native Banner</span><span className="ad-toggle-desc">Top & bottom banners</span></div>
-          <button className={adConfig.nativeBanner?.enabled ? 'toggle on' : 'toggle'} onClick={() => updateAdConfig({ ...adConfig, nativeBanner: { ...adConfig.nativeBanner, enabled: !adConfig.nativeBanner?.enabled } })}>
-            <span className="toggle-knob" />
-          </button>
+          <div><span className="ad-toggle-label">Native Banner</span><span className="ad-toggle-desc">Visible banner ad</span></div>
+          <button className={adConfig.nativeBanner?.enabled ? 'toggle on' : 'toggle'} onClick={() => updateAdConfig({ ...adConfig, nativeBanner: { ...adConfig.nativeBanner, enabled: !adConfig.nativeBanner?.enabled } })}><span className="toggle-knob" /></button>
         </div>
         {adConfig.nativeBanner?.enabled && (
           <>
             <input className="ad-input" type="text" value={adConfig.nativeBanner?.src || ''} onChange={(e) => updateAdConfig({ ...adConfig, nativeBanner: { ...adConfig.nativeBanner, src: e.target.value } })} placeholder="Native banner script URL" />
-            <input className="ad-input" type="text" value={adConfig.nativeBanner?.containerId || ''} onChange={(e) => updateAdConfig({ ...adConfig, nativeBanner: { ...adConfig.nativeBanner, containerId: e.target.value } })} placeholder="Container div ID" />
+            <input className="ad-input" type="text" value={adConfig.nativeBanner?.containerId || ''} onChange={(e) => updateAdConfig({ ...adConfig, nativeBanner: { ...adConfig.nativeBanner, containerId: e.target.value } })} placeholder="Container div ID (from Adsterra)" />
           </>
         )}
         <hr className="dropdown-sep" />
@@ -401,7 +424,9 @@ export default function App() {
       <header className="topbar">
         <div className="logo">QuickCut</div>
         <div className="topbar-right">
-          {modelStatus === 'loading' && <span className="badge badge-loading"><span className="dot-pulse" /> AI {modelProgress}%</span>}
+          {modelStatus === 'loading' && (
+            <span className="badge badge-loading"><span className="dot-pulse" /> AI {modelProgress}%</span>
+          )}
           {modelStatus === 'ready' && <span className="badge badge-ready">✓ AI ready</span>}
           {user ? (
             <div className="profile-menu" ref={menuRef}>
@@ -436,17 +461,22 @@ export default function App() {
 
       {apkPrompt}
 
-      {adConfig.enabled && adConfig.nativeBanner?.enabled && (
-        <div className="ad-slot" data-ad-slot="top">
-          <div className="adsterra-container" id={adConfig.nativeBanner?.containerId + '-top'}></div>
-        </div>
-      )}
-
       <main className="hero">
         <h1>Remove Image Backgrounds</h1>
         <p className="hero-sub">100% free. AI-powered. Runs in your browser.</p>
 
-        {!user && remainingFree > 0 && remainingFree <= adConfig.guestLimit && (
+        {/* Model loading bar — visible to all users while model downloads */}
+        {modelStatus === 'loading' && (
+          <div className="model-loading-bar">
+            <p>Preparing AI model... {modelProgress}%</p>
+            <div className="progress-bar" style={{ maxWidth: 300, margin: '8px auto 0' }}>
+              <div className="progress-fill" style={{ width: `${modelProgress}%` }} />
+            </div>
+          </div>
+        )}
+
+        {/* Guest usage indicator */}
+        {!user && remainingFree > 0 && remainingFree <= adConfig.guestLimit && modelStatus === 'ready' && (
           <p className="guest-count">{remainingFree} free {remainingFree === 1 ? 'image' : 'images'} left — <span className="signup-link" onClick={() => { setAuthReason('Sign up for unlimited free usage!'); setShowAuthModal(true); }}>sign up for unlimited</span></p>
         )}
 
@@ -456,12 +486,12 @@ export default function App() {
             onDragLeave={() => setDragOver(false)}
             onDrop={onDrop}
             onClick={() => document.getElementById('fileInput').click()}
-            style={{ borderColor: dragOver ? 'var(--primary)' : 'var(--border)' }}
+            style={{ borderColor: dragOver ? 'var(--primary)' : 'var(--border)', opacity: modelStatus === 'loading' ? 0.6 : 1 }}
           >
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             <p>Drop image here or <span className="browse">browse</span></p>
             {modelStatus === 'ready' && <span className="ready-hint">AI ready — instant processing</span>}
-            {modelStatus === 'loading' && <span className="loading-hint">Preparing AI model...</span>}
+            {modelStatus === 'loading' && <span className="loading-hint">Preparing AI model... {modelProgress}%</span>}
             <input type="file" id="fileInput" accept="image/*" hidden onChange={(e) => handleFile(e.target.files[0])} />
           </div>
         )}
@@ -518,9 +548,10 @@ export default function App() {
         )}
       </main>
 
-      {adConfig.enabled && adConfig.nativeBanner?.enabled && (
-        <div className="ad-slot" data-ad-slot="bottom">
-          <div className="adsterra-container" id={adConfig.nativeBanner?.containerId + '-bottom'}></div>
+      {/* Adsterra Native Banner — single placement with EXACT container ID */}
+      {adConfig.enabled && adConfig.nativeBanner?.enabled && adConfigLoaded && (
+        <div className="ad-placement">
+          <div id={adConfig.nativeBanner.containerId} className="adsterra-native"></div>
         </div>
       )}
 
