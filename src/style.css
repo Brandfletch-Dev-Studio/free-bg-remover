@@ -119,3 +119,73 @@ body {
 .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
 .btn-outline:hover { border-color: var(--primary); background: rgba(108, 99, 255, 0.08); }
+
+/* ===== Modal (auth gate) ===== */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; padding: 24px;
+  animation: fadeIn 0.2s ease;
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.modal-card {
+  width: 100%; max-width: 400px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 36px 32px;
+  text-align: center; position: relative;
+  animation: slideUp 0.25s ease;
+}
+@keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+.modal-close {
+  position: absolute; top: 16px; right: 16px;
+  background: none; border: none; color: var(--muted);
+  font-size: 1.1rem; cursor: pointer; padding: 4px 8px;
+  border-radius: 6px; transition: all 0.15s;
+}
+.modal-close:hover { color: var(--text); background: var(--surface2); }
+.modal-title { font-size: 1.3rem; font-weight: 700; margin-bottom: 6px; }
+.modal-sub { color: var(--muted); font-size: 0.88rem; margin-bottom: 24px; }
+
+/* ===== APK install banner ===== */
+.apk-banner {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: var(--surface2); border-top: 1px solid var(--border);
+  padding: 12px 16px; z-index: 500;
+  animation: slideUp 0.3s ease;
+  box-shadow: 0 -4px 24px rgba(0,0,0,0.3);
+}
+.apk-content { max-width: 600px; margin: 0 auto; display: flex; align-items: center; gap: 14px; }
+.apk-icon {
+  flex-shrink: 0; width: 44px; height: 44px; border-radius: 10px;
+  background: rgba(108, 99, 255, 0.15); color: var(--primary);
+  display: flex; align-items: center; justify-content: center;
+}
+.apk-text { flex: 1; }
+.apk-title { font-weight: 600; font-size: 0.92rem; }
+.apk-desc { color: var(--muted); font-size: 0.78rem; margin-top: 1px; }
+.apk-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.apk-dismiss {
+  background: none; border: none; color: var(--muted);
+  font-size: 0.85rem; cursor: pointer; padding: 8px 12px;
+  border-radius: 6px; transition: color 0.15s;
+}
+.apk-dismiss:hover { color: var(--text); }
+
+/* ===== Signup hint (shown on result for guests) ===== */
+.signup-hint {
+  margin-top: 14px; padding: 10px 16px;
+  background: rgba(108, 99, 255, 0.1); border: 1px solid rgba(108, 99, 255, 0.25);
+  border-radius: 8px; text-align: center;
+}
+.signup-hint span { color: var(--primary); font-size: 0.85rem; font-weight: 500; }
+
+/* ===== Responsive tweaks ===== */
+@media (max-width: 600px) {
+  .topbar { padding: 10px 16px; }
+  .hero { padding: 24px 16px; }
+  .badge { font-size: 0.72rem; padding: 4px 10px; }
+  .apk-content { flex-wrap: wrap; }
+  .apk-text { min-width: 0; }
+}
