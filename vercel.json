@@ -1,5 +1,11 @@
 {
   "buildCommand": "vite build",
   "outputDirectory": "dist",
-  "framework": "vite"
+  "framework": "vite",
+  "functions": {
+    "api/remove-bg.js": {
+      "memory": 1024,
+      "maxDuration": 10
+    }
+  }
 }

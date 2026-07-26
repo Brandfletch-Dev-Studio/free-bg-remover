@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from './lib/supabase.js';
 
-const BG_API_URL = import.meta.env.VITE_BG_API_URL || 'http://localhost:8000';
-
 export default function App() {
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState('signin'); // 'signin' | 'signup'
@@ -71,26 +69,26 @@ export default function App() {
 
   async function processImage(imgFile) {
     setProcessing(true);
-    setProgressText('Uploading & removing background...');
+    setProgressText('Removing background...');
     setError('');
     const startTime = Date.now();
     try {
-      const formData = new FormData();
-      formData.append('file', imgFile);
-      const res = await fetch(`${BG_API_URL}/remove-bg`, {
+      // Send raw file to Vercel serverless function
+      const res = await fetch('/api/remove-bg', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': imgFile.type || 'image/jpeg' },
+        body: imgFile,
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `Server error (${res.status})`);
+        throw new Error(errData.error || `Server error (${res.status})`);
       }
       const blob = await res.blob();
       setResultUrl(URL.createObjectURL(blob));
       const elapsed = Date.now() - startTime;
       setProgressText(`Done in ${(elapsed / 1000).toFixed(1)}s`);
 
-      // Track usage (fire-and-forget — table may not exist yet)
+      // Track usage (fire-and-forget)
       supabase.from('bg_remover_jobs').insert({
         user_email: user?.email || 'anonymous',
         file_size_bytes: imgFile.size,
