@@ -205,3 +205,26 @@ body {
 .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
 .btn-outline:hover { border-color: var(--primary); background: rgba(108, 99, 255, 0.08); }
+
+/* Progress bar */
+.progress-bar {
+  width: 100%;
+  max-width: 300px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), var(--primary-dark));
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.progress-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  opacity: 0.7;
+  max-width: 280px;
+  text-align: center;
+}

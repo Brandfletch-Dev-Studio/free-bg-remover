@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './lib/supabase.js';
+import { removeBackground } from '@imgly/background-removal';
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [authMode, setAuthMode] = useState('signin'); // 'signin' | 'signup'
+  const [authMode, setAuthMode] = useState('signin');
   const [authForm, setAuthForm] = useState({ email: '', password: '' });
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
@@ -13,8 +14,10 @@ export default function App() {
   const [resultUrl, setResultUrl] = useState(null);
   const [processing, setProcessing] = useState(false);
   const [progressText, setProgressText] = useState('');
+  const [progressPct, setProgressPct] = useState(0);
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
+  const [modelLoaded, setModelLoaded] = useState(false);
   const dropRef = useRef(null);
 
   useEffect(() => {
@@ -67,28 +70,45 @@ export default function App() {
     await processImage(selectedFile);
   }
 
-  async function processImage(imgFile) {
+  const processImage = useCallback(async (imgFile) => {
     setProcessing(true);
-    setProgressText('Removing background...');
     setError('');
     const startTime = Date.now();
+
     try {
-      // Send raw file to Vercel serverless function
-      const res = await fetch('/api/remove-bg', {
-        method: 'POST',
-        headers: { 'Content-Type': imgFile.type || 'image/jpeg' },
-        body: imgFile,
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Server error (${res.status})`);
+      if (!modelLoaded) {
+        setProgressText('Downloading AI model (one-time, ~24MB)...');
+        setProgressPct(15);
+      } else {
+        setProgressText('Processing image...');
+        setProgressPct(50);
       }
-      const blob = await res.blob();
-      setResultUrl(URL.createObjectURL(blob));
+
+      // @imgly/background-removal processes client-side using WASM
+      // The model is downloaded from CDN and cached by the browser
+      const result = await removeBackground(imgFile, {
+        model: 'isnet_fp16',
+        output: { format: 'image/png' },
+        progress: (key, current, total) => {
+          const pct = Math.round((current / total) * 100);
+          if (key.includes('fetch')) {
+            setProgressText(`Downloading AI model... ${pct}%`);
+            setProgressPct(Math.min(pct * 0.4, 40));
+          } else if (key.includes('inference')) {
+            setProgressText(`Removing background... ${pct}%`);
+            setProgressPct(40 + Math.round(pct * 0.6));
+          }
+        },
+      });
+
+      setModelLoaded(true);
+      const url = URL.createObjectURL(result);
+      setResultUrl(url);
       const elapsed = Date.now() - startTime;
       setProgressText(`Done in ${(elapsed / 1000).toFixed(1)}s`);
+      setProgressPct(100);
 
-      // Track usage (fire-and-forget)
+      // Track usage
       supabase.from('bg_remover_jobs').insert({
         user_email: user?.email || 'anonymous',
         file_size_bytes: imgFile.size,
@@ -96,11 +116,11 @@ export default function App() {
         status: 'completed',
       }).then(() => {});
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Failed to process image. Try a smaller image.');
     } finally {
       setProcessing(false);
     }
-  }
+  }, [modelLoaded, user]);
 
   function reset() {
     setFile(null);
@@ -108,6 +128,7 @@ export default function App() {
     setResultUrl(null);
     setError('');
     setProgressText('');
+    setProgressPct(0);
   }
 
   function onDrop(e) {
@@ -122,7 +143,7 @@ export default function App() {
       <div className="auth-wrap">
         <div className="auth-card">
           <h1>QuickCut</h1>
-          <p className="auth-sub">Free background remover — fast & server-side</p>
+          <p className="auth-sub">Free background remover — powered by AI</p>
           <div className="auth-tabs">
             <button className={authMode === 'signin' ? 'active' : ''} onClick={() => setAuthMode('signin')}>Sign In</button>
             <button className={authMode === 'signup' ? 'active' : ''} onClick={() => setAuthMode('signup')}>Sign Up</button>
@@ -170,7 +191,7 @@ export default function App() {
 
       <main className="hero">
         <h1>Remove Image Backgrounds</h1>
-        <p className="hero-sub">100% free. Fast AI processing. No paywall.</p>
+        <p className="hero-sub">100% free. AI-powered. Runs in your browser.</p>
 
         {!file && !processing && (
           <div
@@ -196,6 +217,14 @@ export default function App() {
           <div className="progress">
             <div className="spinner" />
             <p>{progressText}</p>
+            {progressPct > 0 && (
+              <div className="progress-bar">
+                <div className="progress-fill" style={{ width: `${progressPct}%` }} />
+              </div>
+            )}
+            {!modelLoaded && (
+              <p className="progress-hint">First run downloads the AI model (~24MB, cached for next time)</p>
+            )}
           </div>
         )}
 
