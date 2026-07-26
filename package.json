@@ -1,16 +1,19 @@
 {
   "name": "free-bg-remover",
-  "version": "1.0.0",
-  "description": "Free image background remover",
+  "version": "2.0.0",
+  "description": "Free background remover — fast, server-side AI processing",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@imgly/background-removal": "^1.4.5"
+    "@supabase/supabase-js": "^2.45.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "vite": "^5.0.0"
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.2"
   }
 }

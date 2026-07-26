@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: free-bg-remover-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: FRONTEND_ORIGIN
+        sync: false
