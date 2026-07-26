@@ -1,7 +1,9 @@
-// Ad configuration — controllable from admin panel
-// Stored in localStorage for instant updates without redeploy
+// Ad configuration — synced via Supabase (global for ALL users)
+// Falls back to defaults if Supabase is unreachable
 
-const DEFAULT_CONFIG = {
+import { supabase } from './lib/supabase.js';
+
+export const DEFAULT_CONFIG = {
   enabled: true,
   popunder: {
     enabled: true,
@@ -12,26 +14,48 @@ const DEFAULT_CONFIG = {
     src: 'https://pl30548467.effectivecpmnetwork.com/4b3b32e7fb3861304ce6e105fbcbb60a/invoke.js',
     containerId: 'container-4b3b32e7fb3861304ce6e105fbcbb60a',
   },
-  // How many free images before requiring signup
   guestLimit: 3,
 };
 
-const STORAGE_KEY = 'quickcut-ad-config';
+// In-memory cache (avoids redundant fetches)
+let cachedConfig = null;
+let fetchPromise = null;
 
-export function getAdConfig() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) return { ...DEFAULT_CONFIG, ...JSON.parse(stored) };
-  } catch {}
-  return DEFAULT_CONFIG;
+export async function fetchAdConfig() {
+  if (cachedConfig) return cachedConfig;
+  if (fetchPromise) return fetchPromise;
+
+  fetchPromise = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from('site_settings')
+        .select('config')
+        .eq('id', 1)
+        .single();
+
+      if (error || !data?.config) throw error || new Error('No config');
+
+      cachedConfig = { ...DEFAULT_CONFIG, ...data.config };
+      return cachedConfig;
+    } catch (err) {
+      console.warn('Failed to fetch ad config, using defaults', err);
+      cachedConfig = DEFAULT_CONFIG;
+      return cachedConfig;
+    }
+  })();
+
+  return fetchPromise;
 }
 
-export function saveAdConfig(config) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-}
+export async function saveAdConfigRemote(newConfig) {
+  const { error } = await supabase
+    .from('site_settings')
+    .update({ config: newConfig, updated_at: new Date().toISOString() })
+    .eq('id', 1);
 
-export function resetAdConfig() {
-  localStorage.removeItem(STORAGE_KEY);
+  if (error) throw error;
+  cachedConfig = newConfig;
+  return newConfig;
 }
 
 // Inject a script into the page
@@ -51,39 +75,27 @@ function removeScript(id) {
 }
 
 // Initialize ads based on config
-export function initAds(config = getAdConfig()) {
-  if (!config.enabled) {
-    removeScript('adsterra-popunder');
-    removeScript('adsterra-native');
-    return;
-  }
+export function initAds(config) {
+  if (!config) return;
+
+  // Clean up first
+  removeScript('adsterra-popunder');
+  removeScript('adsterra-native');
+
+  if (!config.enabled) return;
 
   // Popunder
   if (config.popunder?.enabled && config.popunder?.src) {
     injectScript(config.popunder.src, 'adsterra-popunder');
-  } else {
-    removeScript('adsterra-popunder');
   }
 
-  // Native banner — needs both script + container div
+  // Native banner — script injects content into matching div IDs
   if (config.nativeBanner?.enabled && config.nativeBanner?.src) {
-    // Create container divs if not present
-    document.querySelectorAll('[data-ad-slot]').forEach((slot) => {
-      const container = slot.querySelector('.adsterra-container');
-      if (!container) {
-        const div = document.createElement('div');
-        div.id = config.nativeBanner.containerId + '-' + slot.dataset.adSlot;
-        div.className = 'adsterra-container';
-        slot.appendChild(div);
-      }
-    });
     injectScript(config.nativeBanner.src, 'adsterra-native');
-  } else {
-    removeScript('adsterra-native');
   }
 }
 
-// Guest usage tracking
+// Guest usage tracking (local-only, per browser)
 const USAGE_KEY = 'quickcut-guest-usage';
 
 export function getGuestUsage() {
@@ -104,6 +116,6 @@ export function resetGuestUsage() {
   localStorage.removeItem(USAGE_KEY);
 }
 
-export function canGuestProcess(config = getAdConfig()) {
-  return getGuestUsage() < config.guestLimit;
+export function canGuestProcess(config) {
+  return getGuestUsage() < (config?.guestLimit ?? 3);
 }

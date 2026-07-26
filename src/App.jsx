@@ -2,9 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './lib/supabase.js';
 import { removeBackground, preload } from '@imgly/background-removal';
 import {
-  getAdConfig, saveAdConfig, initAds,
+  fetchAdConfig, saveAdConfigRemote, initAds,
   getGuestUsage, incrementGuestUsage, canGuestProcess,
-  resetGuestUsage,
+  resetGuestUsage, DEFAULT_CONFIG,
 } from './ads.js';
 
 // Admin email — can control ads
@@ -41,7 +41,9 @@ export default function App() {
 
   const [showApkPrompt, setShowApkPrompt] = useState(false);
   const [showAdSettings, setShowAdSettings] = useState(false);
-  const [adConfig, setAdConfig] = useState(getAdConfig());
+  const [adConfig, setAdConfig] = useState(DEFAULT_CONFIG);
+  const [adConfigLoaded, setAdConfigLoaded] = useState(false);
+  const [savingAds, setSavingAds] = useState(false);
   const [guestUsage, setGuestUsage] = useState(getGuestUsage());
   const [showLimitModal, setShowLimitModal] = useState(false);
 
@@ -76,20 +78,21 @@ export default function App() {
   useEffect(() => {
     if (modelStatus !== 'idle') return;
     setModelStatus('loading');
-    preload({
-      model: 'isnet_fp16',
-      progress: (key, current, total) => {
-        setModelProgress(Math.round((current / total) * 100));
-      },
-    })
+    preload({ model: 'isnet_fp16', progress: (key, current, total) => {
+      setModelProgress(Math.round((current / total) * 100));
+    }})
       .then(() => { setModelStatus('ready'); setModelProgress(100); })
       .catch(() => { setModelStatus('idle'); });
   }, [modelStatus]);
 
-  // --- Initialize ads ---
+  // --- Fetch ad config from Supabase (global for all users) ---
   useEffect(() => {
-    initAds(adConfig);
-  }, [adConfig]);
+    fetchAdConfig().then((config) => {
+      setAdConfig(config);
+      setAdConfigLoaded(true);
+      initAds(config);
+    });
+  }, []);
 
   // --- APK prompt after 30s ---
   useEffect(() => {
@@ -125,7 +128,6 @@ export default function App() {
     }
   }
 
-  // Close auth modal when user logs in
   useEffect(() => {
     if (user && showAuthModal) {
       setShowAuthModal(false);
@@ -146,20 +148,15 @@ export default function App() {
       setError('Please select an image file.');
       return;
     }
-
-    // Gate: check guest usage limit
     if (!user && !canGuestProcess(adConfig)) {
       setShowLimitModal(true);
       return;
     }
-
     setError('');
     setResultUrl(null);
     setFile(selectedFile);
     setOriginalUrl(URL.createObjectURL(selectedFile));
     await processImage(selectedFile);
-
-    // Increment guest usage after processing
     if (!user) {
       const newCount = incrementGuestUsage();
       setGuestUsage(newCount);
@@ -178,7 +175,6 @@ export default function App() {
         setProgressText('Processing image...');
         setProgressPct(40);
       }
-
       const result = await removeBackground(imgFile, {
         model: 'isnet_fp16',
         output: { format: 'image/png' },
@@ -193,14 +189,12 @@ export default function App() {
           }
         },
       });
-
       setModelStatus('ready');
       const url = URL.createObjectURL(result);
       setResultUrl(url);
       setResultBlob(result);
       setProgressText(`Done in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
       setProgressPct(100);
-
       supabase.from('bg_remover_jobs').insert({
         user_email: user?.email || 'anonymous',
         file_size_bytes: imgFile.size,
@@ -225,7 +219,6 @@ export default function App() {
     handleFile(e.dataTransfer.files[0]);
   }
 
-  // Gate download behind auth
   function gateDownload(action) {
     if (!user) {
       setAuthReason('Sign up to download your result — it\'s free!');
@@ -267,11 +260,20 @@ export default function App() {
     setDlOpen(false);
   }
 
-  // Save ad config
-  function updateAdConfig(newConfig) {
+  // Save ad config to Supabase (global for all users)
+  async function updateAdConfig(newConfig) {
     setAdConfig(newConfig);
-    saveAdConfig(newConfig);
     initAds(newConfig);
+    if (isAdmin) {
+      setSavingAds(true);
+      try {
+        await saveAdConfigRemote(newConfig);
+      } catch (err) {
+        alert('Failed to save ad settings to server: ' + err.message);
+      } finally {
+        setSavingAds(false);
+      }
+    }
   }
 
   const initials = user?.email ? user.email.charAt(0).toUpperCase() : '?';
@@ -301,7 +303,7 @@ export default function App() {
     </div>
   ) : null;
 
-  // ============ LIMIT MODAL (guest hit usage cap) ============
+  // ============ LIMIT MODAL ============
   const limitModal = showLimitModal && !user ? (
     <div className="modal-overlay" onClick={(e) => { if (e.target.classList.contains('modal-overlay')) setShowLimitModal(false); }}>
       <div className="modal-card">
@@ -330,95 +332,46 @@ export default function App() {
       <div className="modal-card" style={{ maxWidth: 480, textAlign: 'left' }}>
         <button className="modal-close" onClick={() => setShowAdSettings(false)}>✕</button>
         <h2 className="modal-title" style={{ textAlign: 'center' }}>Ad Settings</h2>
-        <p className="modal-sub" style={{ textAlign: 'center' }}>Control which ads are shown to users.</p>
+        <p className="modal-sub" style={{ textAlign: 'center' }}>Changes apply to ALL users globally.</p>
 
-        {/* Global toggle */}
+        {savingAds && <p style={{ textAlign: 'center', color: 'var(--primary)', fontSize: '0.85rem', marginBottom: 12 }}>Saving to server…</p>}
+
         <div className="ad-toggle-row">
-          <div>
-            <span className="ad-toggle-label">All Ads</span>
-            <span className="ad-toggle-desc">Master switch</span>
-          </div>
+          <div><span className="ad-toggle-label">All Ads</span><span className="ad-toggle-desc">Master switch</span></div>
           <button className={adConfig.enabled ? 'toggle on' : 'toggle'} onClick={() => updateAdConfig({ ...adConfig, enabled: !adConfig.enabled })}>
             <span className="toggle-knob" />
           </button>
         </div>
-
         <hr className="dropdown-sep" />
 
-        {/* Popunder */}
         <div className="ad-toggle-row">
-          <div>
-            <span className="ad-toggle-label">Popunder / Interstitial</span>
-            <span className="ad-toggle-desc">Full-page ad on click</span>
-          </div>
-          <button
-            className={adConfig.popunder?.enabled ? 'toggle on' : 'toggle'}
-            onClick={() => updateAdConfig({ ...adConfig, popunder: { ...adConfig.popunder, enabled: !adConfig.popunder?.enabled } })}
-          >
+          <div><span className="ad-toggle-label">Popunder / Interstitial</span><span className="ad-toggle-desc">Full-page ad on click</span></div>
+          <button className={adConfig.popunder?.enabled ? 'toggle on' : 'toggle'} onClick={() => updateAdConfig({ ...adConfig, popunder: { ...adConfig.popunder, enabled: !adConfig.popunder?.enabled } })}>
             <span className="toggle-knob" />
           </button>
         </div>
         {adConfig.popunder?.enabled && (
-          <input
-            className="ad-input"
-            type="text"
-            value={adConfig.popunder?.src || ''}
-            onChange={(e) => updateAdConfig({ ...adConfig, popunder: { ...adConfig.popunder, src: e.target.value } })}
-            placeholder="Popunder script URL"
-          />
+          <input className="ad-input" type="text" value={adConfig.popunder?.src || ''} onChange={(e) => updateAdConfig({ ...adConfig, popunder: { ...adConfig.popunder, src: e.target.value } })} placeholder="Popunder script URL" />
         )}
-
         <hr className="dropdown-sep" />
 
-        {/* Native banner */}
         <div className="ad-toggle-row">
-          <div>
-            <span className="ad-toggle-label">Native Banner</span>
-            <span className="ad-toggle-desc">Top & bottom banners</span>
-          </div>
-          <button
-            className={adConfig.nativeBanner?.enabled ? 'toggle on' : 'toggle'}
-            onClick={() => updateAdConfig({ ...adConfig, nativeBanner: { ...adConfig.nativeBanner, enabled: !adConfig.nativeBanner?.enabled } })}
-          >
+          <div><span className="ad-toggle-label">Native Banner</span><span className="ad-toggle-desc">Top & bottom banners</span></div>
+          <button className={adConfig.nativeBanner?.enabled ? 'toggle on' : 'toggle'} onClick={() => updateAdConfig({ ...adConfig, nativeBanner: { ...adConfig.nativeBanner, enabled: !adConfig.nativeBanner?.enabled } })}>
             <span className="toggle-knob" />
           </button>
         </div>
         {adConfig.nativeBanner?.enabled && (
           <>
-            <input
-              className="ad-input"
-              type="text"
-              value={adConfig.nativeBanner?.src || ''}
-              onChange={(e) => updateAdConfig({ ...adConfig, nativeBanner: { ...adConfig.nativeBanner, src: e.target.value } })}
-              placeholder="Native banner script URL"
-            />
-            <input
-              className="ad-input"
-              type="text"
-              value={adConfig.nativeBanner?.containerId || ''}
-              onChange={(e) => updateAdConfig({ ...adConfig, nativeBanner: { ...adConfig.nativeBanner, containerId: e.target.value } })}
-              placeholder="Container div ID"
-            />
+            <input className="ad-input" type="text" value={adConfig.nativeBanner?.src || ''} onChange={(e) => updateAdConfig({ ...adConfig, nativeBanner: { ...adConfig.nativeBanner, src: e.target.value } })} placeholder="Native banner script URL" />
+            <input className="ad-input" type="text" value={adConfig.nativeBanner?.containerId || ''} onChange={(e) => updateAdConfig({ ...adConfig, nativeBanner: { ...adConfig.nativeBanner, containerId: e.target.value } })} placeholder="Container div ID" />
           </>
         )}
-
         <hr className="dropdown-sep" />
 
-        {/* Guest limit */}
         <div className="ad-toggle-row">
-          <div>
-            <span className="ad-toggle-label">Guest Free Limit</span>
-            <span className="ad-toggle-desc">Images before signup required</span>
-          </div>
-          <input
-            type="number"
-            min="0"
-            max="20"
-            value={adConfig.guestLimit}
-            onChange={(e) => updateAdConfig({ ...adConfig, guestLimit: parseInt(e.target.value) || 3 })}
-            className="ad-number"
-            style={{ width: 60 }}
-          />
+          <div><span className="ad-toggle-label">Guest Free Limit</span><span className="ad-toggle-desc">Images before signup required</span></div>
+          <input type="number" min="0" max="20" value={adConfig.guestLimit} onChange={(e) => updateAdConfig({ ...adConfig, guestLimit: parseInt(e.target.value) || 3 })} className="ad-number" style={{ width: 60 }} />
         </div>
 
         <div style={{ marginTop: 20, textAlign: 'center' }}>
@@ -432,15 +385,8 @@ export default function App() {
   const apkPrompt = showApkPrompt ? (
     <div className="apk-banner">
       <div className="apk-content">
-        <div className="apk-icon">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="5" y="2" width="14" height="20" rx="2" ry="2" /><line x1="12" y1="18" x2="12" y2="18" />
-          </svg>
-        </div>
-        <div className="apk-text">
-          <p className="apk-title">Install QuickCut</p>
-          <p className="apk-desc">Add to your home screen for instant access</p>
-        </div>
+        <div className="apk-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2" /><line x1="12" y1="18" x2="12" y2="18" /></svg></div>
+        <div className="apk-text"><p className="apk-title">Install QuickCut</p><p className="apk-desc">Add to your home screen for instant access</p></div>
         <div className="apk-actions">
           <button className="btn btn-primary btn-sm" onClick={() => { dismissApkPrompt(); alert('To install:\n\n• Android: Chrome menu → "Install app"\n• iPhone: Safari Share → "Add to Home Screen"'); }}>Install</button>
           <button className="apk-dismiss" onClick={dismissApkPrompt}>Later</button>
@@ -455,11 +401,8 @@ export default function App() {
       <header className="topbar">
         <div className="logo">QuickCut</div>
         <div className="topbar-right">
-          {modelStatus === 'loading' && (
-            <span className="badge badge-loading"><span className="dot-pulse" /> AI {modelProgress}%</span>
-          )}
+          {modelStatus === 'loading' && <span className="badge badge-loading"><span className="dot-pulse" /> AI {modelProgress}%</span>}
           {modelStatus === 'ready' && <span className="badge badge-ready">✓ AI ready</span>}
-
           {user ? (
             <div className="profile-menu" ref={menuRef}>
               <button className="avatar-btn" onClick={() => setMenuOpen(!menuOpen)}>
@@ -469,10 +412,7 @@ export default function App() {
                 <div className="dropdown">
                   <div className="dropdown-header">
                     <span className="avatar avatar-lg">{initials}</span>
-                    <div>
-                      <p className="dropdown-email">{user.email}</p>
-                      <p className="dropdown-sub">{isAdmin ? 'Admin' : 'Free plan'}</p>
-                    </div>
+                    <div><p className="dropdown-email">{user.email}</p><p className="dropdown-sub">{isAdmin ? 'Admin' : 'Free plan'}</p></div>
                   </div>
                   <hr className="dropdown-sep" />
                   {isAdmin && (
@@ -496,7 +436,6 @@ export default function App() {
 
       {apkPrompt}
 
-      {/* Ad slot — top (native banner) */}
       {adConfig.enabled && adConfig.nativeBanner?.enabled && (
         <div className="ad-slot" data-ad-slot="top">
           <div className="adsterra-container" id={adConfig.nativeBanner?.containerId + '-top'}></div>
@@ -507,14 +446,12 @@ export default function App() {
         <h1>Remove Image Backgrounds</h1>
         <p className="hero-sub">100% free. AI-powered. Runs in your browser.</p>
 
-        {/* Guest usage indicator */}
         {!user && remainingFree > 0 && remainingFree <= adConfig.guestLimit && (
           <p className="guest-count">{remainingFree} free {remainingFree === 1 ? 'image' : 'images'} left — <span className="signup-link" onClick={() => { setAuthReason('Sign up for unlimited free usage!'); setShowAuthModal(true); }}>sign up for unlimited</span></p>
         )}
 
         {!file && !processing && (
-          <div
-            className="drop-zone" ref={dropRef}
+          <div className="drop-zone" ref={dropRef}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={onDrop}
@@ -533,17 +470,12 @@ export default function App() {
           <div className="progress">
             <div className="spinner" />
             <p>{progressText}</p>
-            {progressPct > 0 && (
-              <div className="progress-bar"><div className="progress-fill" style={{ width: `${progressPct}%` }} /></div>
-            )}
+            {progressPct > 0 && <div className="progress-bar"><div className="progress-fill" style={{ width: `${progressPct}%` }} /></div>}
           </div>
         )}
 
         {error && (
-          <div className="error-box">
-            <p>{error}</p>
-            <button className="btn btn-outline btn-sm" onClick={reset}>Try Again</button>
-          </div>
+          <div className="error-box"><p>{error}</p><button className="btn btn-outline btn-sm" onClick={reset}>Try Again</button></div>
         )}
 
         {resultUrl && originalUrl && !processing && (
@@ -553,13 +485,9 @@ export default function App() {
               <div className="preview-card"><p className="label">Background Removed</p><div className="checker"><img src={resultUrl} alt="Result" /></div></div>
             </div>
             <p className="timing">{progressText}</p>
-
             {!user && (
-              <div className="signup-hint">
-                <span>Sign up to download your result — it's free!</span>
-              </div>
+              <div className="signup-hint"><span>Sign up to download your result — it's free!</span></div>
             )}
-
             <div className="actions">
               <div className="dl-menu" ref={dlRef}>
                 <button className="btn btn-primary" onClick={() => setDlOpen(!dlOpen)}>Download <span className="chevron">▾</span></button>
@@ -590,7 +518,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Ad slot — bottom (native banner) */}
       {adConfig.enabled && adConfig.nativeBanner?.enabled && (
         <div className="ad-slot" data-ad-slot="bottom">
           <div className="adsterra-container" id={adConfig.nativeBanner?.containerId + '-bottom'}></div>
